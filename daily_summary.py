@@ -1,62 +1,61 @@
-import datetime
+# daily_summary.py
+
 import requests
-from discord_webhook import DiscordWebhook
+import datetime
+from textblob import TextBlob
+from bs4 import BeautifulSoup
+import json
 
-# === CONFIGURATION ===
-DAILY_SUMMARY_WEBHOOK = "https://discordapp.com/api/webhooks/1399651115032772669/gEFeifjhCiqHOPZkUjS8kv7QF3OY3NTqaNv77o3hhyxnh0pcg8AXBEOQnwqS8IfciEzQ"
-SENTIMENT_LOG_PATH = "sentiment_log.json"  # where hourly sentiment records are stored
-BREAKING_THRESHOLD = 0.75
+KEYWORDS = ["bitcoin", "btc", "crypto", "fed", "inflation", "regulation"]
+NEWS_SOURCES = [
+    "https://www.reuters.com/markets/cryptocurrencies/",
+    "https://cointelegraph.com/",
+    "https://www.coindesk.com/",
+    "https://www.bloomberg.com/crypto",
+    "https://decrypt.co/",
+    "https://cryptobriefing.com/"
+]
 
-# === FUNCTION TO LOAD SENTIMENT HISTORY ===
-def load_sentiment_data():
-    import json
-    from pathlib import Path
-    if not Path(SENTIMENT_LOG_PATH).exists():
-        return []
-    with open(SENTIMENT_LOG_PATH, 'r') as file:
-        return json.load(file)
+DAILY_WEBHOOK = "https://discordapp.com/api/webhooks/1399659709891608649/NmETlG03Owk-7vmvIPkCfQTGTT3EqCSRlnAuZRN8QNbwKyo2P2o2IdjynmgP4cyYeFnq"
 
-# === FUNCTION TO GENERATE SUMMARY ===
-def generate_summary(data):
-    now = datetime.datetime.utcnow()
-    last_24 = [d for d in data if (now - datetime.datetime.fromisoformat(d['timestamp'])).total_seconds() <= 86400]
-    if not last_24:
-        return "No sentiment data available in the past 24 hours."
+def fetch_headlines():
+    headlines = []
+    for url in NEWS_SOURCES:
+        try:
+            r = requests.get(url)
+            soup = BeautifulSoup(r.text, 'html.parser')
+            for tag in soup.find_all(['h1', 'h2', 'h3']):
+                text = tag.get_text().strip()
+                if any(keyword in text.lower() for keyword in KEYWORDS):
+                    headlines.append(text)
+        except Exception as e:
+            print(f"Error fetching from {url}: {e}")
+    return headlines
 
-    scores = [d['score'] for d in last_24]
-    avg_score = sum(scores) / len(scores)
-    trend = "Up" if scores[-1] > scores[0] else "Down" if scores[-1] < scores[0] else "Flat"
+def analyze_sentiment(headlines):
+    scores = []
+    for h in headlines:
+        blob = TextBlob(h)
+        scores.append(blob.sentiment.polarity)
+    avg = sum(scores) / len(scores) if scores else 0
+    trend = "↗️ Upward" if avg > 0.15 else "↘️ Downward" if avg < -0.15 else "→ Stable"
+    return avg, trend, sorted(headlines, key=lambda h: abs(TextBlob(h).sentiment.polarity), reverse=True)[:3]
 
-    top_positive = sorted(last_24, key=lambda x: x['score'], reverse=True)[:3]
-    top_negative = sorted(last_24, key=lambda x: x['score'])[:3]
-    breaking = [d for d in last_24 if abs(d['score']) >= BREAKING_THRESHOLD]
+def send_discord_summary(avg, trend, top_headlines):
+    now = datetime.datetime.now().strftime("%Y-%m-%d")
+    content = f"📊 **Daily Crypto Sentiment Summary ({now})**\n"
+    content += f"**Average Sentiment Score:** {avg:.3f}\n"
+    content += f"**Trend:** {trend}\n"
+    content += "\n**Top 3 Headlines:**\n" + "\n".join([f"- {h}" for h in top_headlines])
+    payload = {"content": content}
+    headers = {'Content-Type': 'application/json'}
+    try:
+        requests.post(DAILY_WEBHOOK, data=json.dumps(payload), headers=headers)
+        print("Summary sent to Discord.")
+    except Exception as e:
+        print(f"Failed to send Discord message: {e}")
 
-    summary = f"**📊 Daily Sentiment Summary ({now.strftime('%Y-%m-%d')} UTC)**\n"
-    summary += f"**Average Score:** {avg_score:.2f} | **Trend:** {trend}\n"
-
-    summary += "\n**🔼 Top Positive News:**\n"
-    for item in top_positive:
-        summary += f"• `{item['score']:.2f}` — {item['headline']}\n"
-
-    summary += "\n**🔽 Top Negative News:**\n"
-    for item in top_negative:
-        summary += f"• `{item['score']:.2f}` — {item['headline']}\n"
-
-    if breaking:
-        summary += "\n🚨 **Breaking Signals:**\n"
-        for item in breaking:
-            summary += f"• `{item['score']:.2f}` — {item['headline']}\n"
-
-    return summary
-
-# === FUNCTION TO SEND TO DISCORD ===
-def send_to_discord(message):
-    webhook = DiscordWebhook(url=DAILY_SUMMARY_WEBHOOK, content=message)
-    response = webhook.execute()
-    return response.status_code
-
-# === MAIN ===
 if __name__ == "__main__":
-    data = load_sentiment_data()
-    report = generate_summary(data)
-    send_to_discord(report)
+    headlines = fetch_headlines()
+    avg, trend, top = analyze_sentiment(headlines)
+    send_discord_summary(avg, trend, top)
