@@ -107,17 +107,7 @@ def make_decision(score):
     else:
         return "NEUTRAL"
 
-if __name__ == "__main__":
-    while True:
-        print(f"\n[{datetime.datetime.now()}] 📰 Checking crypto news...")
-        headlines = fetch_headlines()
-        sentiment = analyze_sentiment(headlines)
-        decision = make_decision(sentiment)
-        print(f"🧠 Sentiment Score: {sentiment:.3f} → Action: {decision}")
-
-        body = f"Sentiment Score: {sentiment:.3f}\nSuggested Action: {decision}\n\nHeadlines:\n" + "\n".join(headlines[:10])
-        send_email_notification(EMAIL_SUBJECT, body)
-        def format_discord_message(sentiment, decision, headlines):
+def format_discord_message(sentiment, decision, headlines):
     time_now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     message = (
         f"📣 **Real-Time Crypto Alert**\n"
@@ -130,10 +120,20 @@ if __name__ == "__main__":
         message += f"• {h}\n"
     return message
 
-# Then replace the line:
-send_discord_notification(body)
-# With:
-discord_msg = format_discord_message(sentiment, decision, headlines)
-send_discord_notification(discord_msg)
+# Main loop
+if __name__ == "__main__":
+    while True:
+        print(f"\n[{datetime.datetime.now()}] 📰 Checking crypto news...")
+        headlines = fetch_headlines()
+        sentiment = analyze_sentiment(headlines)
+        decision = make_decision(sentiment)
+
+        print(f"🧠 Sentiment Score: {sentiment:.3f} → Action: {decision}")
+
+        body = f"Sentiment Score: {sentiment:.3f}\nSuggested Action: {decision}\n\nHeadlines:\n" + "\n".join(headlines[:10])
+        send_email_notification(EMAIL_SUBJECT, body)
+
+        discord_msg = format_discord_message(sentiment, decision, headlines)
+        send_discord_notification(discord_msg)
 
         time.sleep(FETCH_INTERVAL)
