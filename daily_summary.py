@@ -1,76 +1,87 @@
-import time
 import requests
-from datetime import datetime, timedelta
 from textblob import TextBlob
 from bs4 import BeautifulSoup
+import datetime
+import json
 
-# ========== CONFIG ==========
-DISCORD_WEBHOOK_URL = "https://discordapp.com/api/webhooks/1399659709891608649/NmETlG03Owk-7vmvIPkCfQTGTT3EqCSRlnAuZRN8QNbwKyo2P2o2IdjynmgP4cyYeFnq"
+KEYWORDS = ["bitcoin", "btc", "crypto", "fed", "inflation", "regulation"]
 NEWS_SOURCES = [
-    "https://cryptopanic.com/news",  # Feel free to add more
+    "https://www.reuters.com/markets/cryptocurrencies/",
+    "https://cointelegraph.com/",
+    "https://www.coindesk.com/",
+    "https://www.bloomberg.com/crypto",
+    "https://decrypt.co/",
+    "https://cryptobriefing.com/",
+    "https://bitcoinist.com/",
+    "https://www.investing.com/news/cryptocurrency-news",
+    "https://www.fxstreet.com/cryptocurrencies",
+    "https://news.bitcoin.com/",
+    "https://cryptopotato.com/",
+    "https://u.today/",
+    "https://www.financemagnates.com/cryptocurrency/",
+    "https://www.newsbtc.com/",
+    "https://cryptoslate.com/",
+    "https://ambcrypto.com/",
+    "https://www.ccn.com/",
+    "https://cryptobriefing.com/category/news/",
+    "https://www.cryptonewsz.com/",
+    "https://zycrypto.com/"
 ]
-NUM_HEADLINES = 3
-# ============================
+
+DISCORD_WEBHOOK_URL = "https://discordapp.com/api/webhooks/1399659709891608649/NmETlG03Owk-7vmvIPkCfQTGTT3EqCSRlnAuZRN8QNbwKyo2P2o2IdjynmgP4cyYeFnq"
 
 def fetch_headlines():
     headlines = []
-    for source in NEWS_SOURCES:
-        response = requests.get(source)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        for link in soup.find_all('a', href=True):
-            text = link.get_text(strip=True)
-            if 30 < len(text) < 200:  # avoid clutter
-                headlines.append(text)
-        if len(headlines) >= 10:
-            break
-    return headlines[:15]
+    for url in NEWS_SOURCES:
+        try:
+            r = requests.get(url)
+            soup = BeautifulSoup(r.text, 'html.parser')
+            for tag in soup.find_all(['h1', 'h2', 'h3']):
+                text = tag.get_text().strip()
+                if any(keyword in text.lower() for keyword in KEYWORDS):
+                    headlines.append(text)
+        except Exception as e:
+            print(f"Error fetching {url}: {e}")
+    return headlines
 
-def analyze_sentiment(text):
-    return TextBlob(text).sentiment.polarity
+def analyze_sentiment(headlines):
+    total_score = 0
+    count = 0
+    for h in headlines:
+        blob = TextBlob(h)
+        score = blob.sentiment.polarity
+        total_score += score
+        count += 1
+    return total_score / count if count > 0 else 0
 
-def summarize_sentiment():
-    headlines = fetch_headlines()
-    scored = [(h, analyze_sentiment(h)) for h in headlines]
-    sorted_by_score = sorted(scored, key=lambda x: abs(x[1]), reverse=True)
+def send_discord_notification(message):
+    payload = {"content": message}
+    headers = {'Content-Type': 'application/json'}
+    try:
+        response = requests.post(DISCORD_WEBHOOK_URL, data=json.dumps(payload), headers=headers)
+        if response.status_code == 204:
+            print("Discord message sent successfully.")
+        else:
+            print(f"Failed to send Discord message: {response.status_code}, {response.text}")
+    except Exception as e:
+        print(f"Exception sending Discord message: {e}")
 
-    top = sorted_by_score[:NUM_HEADLINES]
-    avg_score = sum(score for _, score in scored) / len(scored)
-    trend = "⬆️ Bullish" if avg_score > 0.05 else "⬇️ Bearish" if avg_score < -0.05 else "➖ Neutral"
-
-    summary = "**📰 Daily Crypto Sentiment Summary**\n\n"
-    summary += f"**Trend:** {trend}\n"
-    summary += f"**Avg Sentiment:** `{avg_score:.3f}`\n\n"
-    summary += "**Top Headlines:**\n"
-    for i, (h, s) in enumerate(top, 1):
-        sentiment = "✅ Positive" if s > 0.1 else "⚠️ Negative" if s < -0.1 else "➖ Neutral"
-        summary += f"{i}. {h}\n> Sentiment: `{s:.3f}` {sentiment}\n\n"
+def format_daily_summary(score, headlines):
+    emoji = "📈" if score > 0.15 else "📉" if score < -0.15 else "⚖️"
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    summary = (
+        f"📊 **Daily Crypto Sentiment Summary**\n"
+        f"🕗 `{now}`\n"
+        f"{emoji} **24h Sentiment Score**: `{score:.3f}`\n"
+        f"🧠 **Interpretation**: {'Bullish' if score > 0.15 else 'Bearish' if score < -0.15 else 'Neutral'}\n\n"
+        f"📰 **Top 5 Headlines:**\n"
+    )
+    for h in headlines[:5]:
+        summary += f"• {h}\n"
     return summary
 
-def send_to_discord(message):
-    payload = {"content": message}
-    response = requests.post(DISCORD_WEBHOOK_URL, json=payload)
-    response.raise_for_status()
-
-def sleep_until_8am():
-    now = datetime.now()
-    next_run = datetime.combine(now.date(), datetime.strptime("08:00", "%H:%M").time())
-    if now >= next_run:
-        next_run += timedelta(days=1)
-    seconds_until = (next_run - now).total_seconds()
-    print(f"[Scheduler] Sleeping for {int(seconds_until)} seconds until 8:00 AM...")
-    time.sleep(seconds_until)
-
-def run_daily_summary():
-    try:
-        print("[Bot] Fetching and analyzing sentiment...")
-        summary = summarize_sentiment()
-        print("[Bot] Sending to Discord...")
-        send_to_discord(summary)
-        print("[Bot] ✅ Summary sent.")
-    except Exception as e:
-        print(f"[Bot] ❌ Error: {e}")
-
 if __name__ == "__main__":
-    while True:
-        run_daily_summary()
-        sleep_until_8am()
+    headlines = fetch_headlines()
+    sentiment_score = analyze_sentiment(headlines)
+    message = format_daily_summary(sentiment_score, headlines)
+    send_discord_notification(message)
