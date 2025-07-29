@@ -1,61 +1,76 @@
-# daily_summary.py
-
+import time
 import requests
-import datetime
+from datetime import datetime, timedelta
 from textblob import TextBlob
 from bs4 import BeautifulSoup
-import json
 
-KEYWORDS = ["bitcoin", "btc", "crypto", "fed", "inflation", "regulation"]
+# ========== CONFIG ==========
+DISCORD_WEBHOOK_URL = "https://discordapp.com/api/webhooks/1399659709891608649/NmETlG03Owk-7vmvIPkCfQTGTT3EqCSRlnAuZRN8QNbwKyo2P2o2IdjynmgP4cyYeFnq"
 NEWS_SOURCES = [
-    "https://www.reuters.com/markets/cryptocurrencies/",
-    "https://cointelegraph.com/",
-    "https://www.coindesk.com/",
-    "https://www.bloomberg.com/crypto",
-    "https://decrypt.co/",
-    "https://cryptobriefing.com/"
+    "https://cryptopanic.com/news",  # Feel free to add more
 ]
-
-DAILY_WEBHOOK = "https://discordapp.com/api/webhooks/1399659709891608649/NmETlG03Owk-7vmvIPkCfQTGTT3EqCSRlnAuZRN8QNbwKyo2P2o2IdjynmgP4cyYeFnq"
+NUM_HEADLINES = 3
+# ============================
 
 def fetch_headlines():
     headlines = []
-    for url in NEWS_SOURCES:
-        try:
-            r = requests.get(url)
-            soup = BeautifulSoup(r.text, 'html.parser')
-            for tag in soup.find_all(['h1', 'h2', 'h3']):
-                text = tag.get_text().strip()
-                if any(keyword in text.lower() for keyword in KEYWORDS):
-                    headlines.append(text)
-        except Exception as e:
-            print(f"Error fetching from {url}: {e}")
-    return headlines
+    for source in NEWS_SOURCES:
+        response = requests.get(source)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        for link in soup.find_all('a', href=True):
+            text = link.get_text(strip=True)
+            if 30 < len(text) < 200:  # avoid clutter
+                headlines.append(text)
+        if len(headlines) >= 10:
+            break
+    return headlines[:15]
 
-def analyze_sentiment(headlines):
-    scores = []
-    for h in headlines:
-        blob = TextBlob(h)
-        scores.append(blob.sentiment.polarity)
-    avg = sum(scores) / len(scores) if scores else 0
-    trend = "↗️ Upward" if avg > 0.15 else "↘️ Downward" if avg < -0.15 else "→ Stable"
-    return avg, trend, sorted(headlines, key=lambda h: abs(TextBlob(h).sentiment.polarity), reverse=True)[:3]
+def analyze_sentiment(text):
+    return TextBlob(text).sentiment.polarity
 
-def send_discord_summary(avg, trend, top_headlines):
-    now = datetime.datetime.now().strftime("%Y-%m-%d")
-    content = f"📊 **Daily Crypto Sentiment Summary ({now})**\n"
-    content += f"**Average Sentiment Score:** {avg:.3f}\n"
-    content += f"**Trend:** {trend}\n"
-    content += "\n**Top 3 Headlines:**\n" + "\n".join([f"- {h}" for h in top_headlines])
-    payload = {"content": content}
-    headers = {'Content-Type': 'application/json'}
+def summarize_sentiment():
+    headlines = fetch_headlines()
+    scored = [(h, analyze_sentiment(h)) for h in headlines]
+    sorted_by_score = sorted(scored, key=lambda x: abs(x[1]), reverse=True)
+
+    top = sorted_by_score[:NUM_HEADLINES]
+    avg_score = sum(score for _, score in scored) / len(scored)
+    trend = "⬆️ Bullish" if avg_score > 0.05 else "⬇️ Bearish" if avg_score < -0.05 else "➖ Neutral"
+
+    summary = "**📰 Daily Crypto Sentiment Summary**\n\n"
+    summary += f"**Trend:** {trend}\n"
+    summary += f"**Avg Sentiment:** `{avg_score:.3f}`\n\n"
+    summary += "**Top Headlines:**\n"
+    for i, (h, s) in enumerate(top, 1):
+        sentiment = "✅ Positive" if s > 0.1 else "⚠️ Negative" if s < -0.1 else "➖ Neutral"
+        summary += f"{i}. {h}\n> Sentiment: `{s:.3f}` {sentiment}\n\n"
+    return summary
+
+def send_to_discord(message):
+    payload = {"content": message}
+    response = requests.post(DISCORD_WEBHOOK_URL, json=payload)
+    response.raise_for_status()
+
+def sleep_until_8am():
+    now = datetime.now()
+    next_run = datetime.combine(now.date(), datetime.strptime("08:00", "%H:%M").time())
+    if now >= next_run:
+        next_run += timedelta(days=1)
+    seconds_until = (next_run - now).total_seconds()
+    print(f"[Scheduler] Sleeping for {int(seconds_until)} seconds until 8:00 AM...")
+    time.sleep(seconds_until)
+
+def run_daily_summary():
     try:
-        requests.post(DAILY_WEBHOOK, data=json.dumps(payload), headers=headers)
-        print("Summary sent to Discord.")
+        print("[Bot] Fetching and analyzing sentiment...")
+        summary = summarize_sentiment()
+        print("[Bot] Sending to Discord...")
+        send_to_discord(summary)
+        print("[Bot] ✅ Summary sent.")
     except Exception as e:
-        print(f"Failed to send Discord message: {e}")
+        print(f"[Bot] ❌ Error: {e}")
 
 if __name__ == "__main__":
-    headlines = fetch_headlines()
-    avg, trend, top = analyze_sentiment(headlines)
-    send_discord_summary(avg, trend, top)
+    while True:
+        run_daily_summary()
+        sleep_until_8am()
