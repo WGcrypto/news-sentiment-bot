@@ -117,6 +117,23 @@ if __name__ == "__main__":
 
         body = f"Sentiment Score: {sentiment:.3f}\nSuggested Action: {decision}\n\nHeadlines:\n" + "\n".join(headlines[:10])
         send_email_notification(EMAIL_SUBJECT, body)
-        send_discord_notification(body)
+        def format_discord_message(sentiment, decision, headlines):
+    time_now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    message = (
+        f"📣 **Real-Time Crypto Alert**\n"
+        f"🕒 `{time_now}`\n"
+        f"🧠 **Sentiment Score**: `{sentiment:.3f}`\n"
+        f"💡 **Suggested Action**: **{decision}**\n\n"
+        f"📰 **Top Headlines:**\n"
+    )
+    for h in headlines[:5]:
+        message += f"• {h}\n"
+    return message
+
+# Then replace the line:
+send_discord_notification(body)
+# With:
+discord_msg = format_discord_message(sentiment, decision, headlines)
+send_discord_notification(discord_msg)
 
         time.sleep(FETCH_INTERVAL)
